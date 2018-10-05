@@ -1,0 +1,33 @@
+{
+  "name": "simple",
+  "url": "nats://localhost:4222",
+  "duration": "1s",
+  "output_file": "tls_with_cipher_results.json",
+  "prettyprint": true,
+  "client_start_delay_max": "1s",
+  "connect_timeout": "5s",
+  "initial_connect_attempts": 2,
+  "tlsca": "./server/ca.pem",
+  "tlscert": "./server/client-cert.pem",
+  "tlskey": "./server/client-key.pem",
+  "usetls": true,
+  "tlsciphers": [
+    "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+  ], 
+  "clients": [
+    {
+      "name": "publisher",
+      "instances": 1,
+      "username": "",
+      "password": "",
+      "pub_msgsize": 128,
+      "pub_msgs_sec": 10000,
+      "pub_subject": "[HOSTNAME].[TESTNAME].foo.[INSTANCE]",
+      "subscriptions": [
+        {
+          "subject": "[HOSTNAME].[TESTNAME].foo.[INSTANCE]"
+        }
+      ]
+    }
+  ]
+}

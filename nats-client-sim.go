@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -17,6 +18,11 @@ import (
 
 	"github.com/nats-io/go-nats"
 )
+
+//
+// TODO - this is way to big, seperate out into client, tls, clientmanager
+// source files
+//
 
 //
 // Global Constants and Variables
@@ -70,7 +76,8 @@ func rps(count int64, elapsed time.Duration) int {
 // Configuration
 //
 
-// Config is the general test configuration
+// TODO:  Maybe move TLS into it's own struct?
+// Config is the general test configuration.
 type Config struct {
 	Name                  string         `json:"name"`
 	ServerURLs            string         `json:"url"`
@@ -83,6 +90,7 @@ type Config struct {
 	TLSClientCA           string         `json:"tlsca"`
 	TLSClientCert         string         `json:"tlscert"`
 	TLSClientKey          string         `json:"tlskey"`
+	TLSCipherSuites       []string       `json:"tlsciphers"`
 	UseTLS                bool           `json:"usetls"`
 	Clients               []ClientConfig `json:"clients"`
 }
@@ -118,6 +126,7 @@ func GenerateDefaultConfigFile() ([]byte, error) {
 	cfg.OutputFile = "results.json"
 	cfg.PrettyPrint = true
 	cfg.IntialConnectAttempts = 10
+	cfg.TLSCipherSuites = append(cfg.TLSCipherSuites, "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305")
 
 	cfg.Clients = make([]ClientConfig, 2)
 
@@ -282,9 +291,53 @@ func (c *Client) errorHandler(nc *nats.Conn, sub *nats.Subscription, err error) 
 	atomic.AddInt32(&c.asCount, 1)
 }
 
-func (c *Client) connect() error {
-	var err error
+// Where we maintain all of the available ciphers
+var cipherMap = map[string]uint16{
+	"TLS_RSA_WITH_RC4_128_SHA":                tls.TLS_RSA_WITH_RC4_128_SHA,
+	"TLS_RSA_WITH_3DES_EDE_CBC_SHA":           tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA,
+	"TLS_RSA_WITH_AES_128_CBC_SHA":            tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+	"TLS_RSA_WITH_AES_128_CBC_SHA256":         tls.TLS_RSA_WITH_AES_128_CBC_SHA256,
+	"TLS_RSA_WITH_AES_256_CBC_SHA":            tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+	"TLS_RSA_WITH_AES_256_GCM_SHA384":         tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+	"TLS_ECDHE_ECDSA_WITH_RC4_128_SHA":        tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA,
+	"TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA":    tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+	"TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA":    tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+	"TLS_ECDHE_RSA_WITH_RC4_128_SHA":          tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA,
+	"TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA":     tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
+	"TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA":      tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+	"TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256":   tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
+	"TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256": tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
+	"TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA":      tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+	"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256":   tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+	"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256": tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+	"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384":   tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384": tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305":    tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+	"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305":  tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+}
 
+func setCiphers(opts *nats.Options, cipherNames []string) error {
+	// ignore if unset
+	if len(cipherNames) == 0 {
+		return nil
+	}
+
+	if opts.TLSConfig == nil {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+
+	csuites := opts.TLSConfig.CipherSuites
+	for _, name := range cipherNames {
+		cipher, exists := cipherMap[name]
+		if !exists {
+			return fmt.Errorf("Unrecognized cipher %s", name)
+		}
+		csuites = append(csuites, cipher)
+	}
+	return nil
+}
+
+func (c *Client) generateOptions() (*nats.Options, error) {
 	cmcfg := c.cm.config
 
 	opts := nats.DefaultOptions
@@ -293,7 +346,6 @@ func (c *Client) connect() error {
 		opts.Servers[i] = strings.Trim(s, " ")
 	}
 
-	opts.Secure = cmcfg.UseTLS
 	opts.AsyncErrorCB = c.errorHandler
 	opts.DisconnectedCB = c.disconnectedHandler
 	opts.ReconnectedCB = c.reconnectedHandler
@@ -302,21 +354,42 @@ func (c *Client) connect() error {
 	opts.Password = c.config.Password
 	opts.Name = c.clientID
 	opts.SubChanLen = 1024 * 1024
+	opts.Timeout = c.cm.connectTimeout
+
+	// TLS options
+	opts.Secure = cmcfg.UseTLS
 	if cmcfg.TLSClientCA != "" {
 		if err := nats.RootCAs(cmcfg.TLSClientCert)(&opts); err != nil {
-			log.Fatalf("client CA error: %v\n", err)
+			return nil, fmt.Errorf("client CA error: %v", err)
 		}
 	}
 	if cmcfg.TLSClientCert != "" {
 		if err := nats.ClientCert(cmcfg.TLSClientCert, cmcfg.TLSClientKey)(&opts); err != nil {
-			log.Fatalf("client cert error: %v\n", err)
+			return nil, fmt.Errorf("client cert error: %v", err)
 		}
+		// it's a test so allow self signed certs
 		opts.TLSConfig.InsecureSkipVerify = true
 	}
-	opts.Timeout = c.cm.connectTimeout
-	attempts := c.cm.config.IntialConnectAttempts
+	if err := setCiphers(&opts, c.cm.config.TLSCipherSuites); err != nil {
+		return nil, fmt.Errorf("error setting cipher: %v", err)
+	}
+
+	return &opts, nil
+}
+
+func (c *Client) connect() error {
+	var err error
+
+	cmcfg := c.cm.config
+
+	attempts := cmcfg.IntialConnectAttempts
 	if attempts <= 0 {
 		attempts = 1
+	}
+
+	opts, err := c.generateOptions()
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	for i := 0; i < attempts; i++ {
@@ -1046,7 +1119,7 @@ func (cm *ClientManager) printBanner() {
 }
 
 // run runs the application
-func run(configFile string, isVerbose, isTraceVerbose, longReport bool) {
+func Run(configFile string, isVerbose, isTraceVerbose, longReport bool) {
 	var err error
 
 	// for testing
@@ -1093,5 +1166,5 @@ func main() {
 	log.SetFlags(0)
 	flag.Parse()
 
-	run(*configFile, *vb, *tb, *pr)
+	Run(*configFile, *vb, *tb, *pr)
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"testing"
@@ -22,24 +23,33 @@ const (
 
 // RunServer runs the NATS server in a go routine
 func RunServer() *server.Server {
-	return RunServerWithPorts(ClientPort, MonitorPort)
+	return RunServerWithPorts(ClientPort, MonitorPort, "")
 }
 
 // RunServerWithPorts runs the NATS server with a monitor port in a go routine
-func RunServerWithPorts(cport, mport int) *server.Server {
+func RunServerWithPorts(cport, mport int, confFile string) *server.Server {
+	var opts *server.Options
 	var enableLogging bool
+	var err error
 
 	// To enable debug/trace output in the NATS server,
 	// flip the enableLogging flag.
 	// enableLogging = true
-
-	opts := &server.Options{
-		Host:     "localhost",
-		Port:     cport,
-		HTTPHost: "127.0.0.1",
-		HTTPPort: mport,
-		NoLog:    !enableLogging,
-		NoSigs:   true,
+	if confFile != "" {
+		opts, err = server.ProcessConfigFile(confFile)
+		if err != nil {
+			log.Fatalf("Received an error reading config file: %v\n", err)
+		}
+	} else {
+		opts = &server.Options{
+			Host:       "localhost",
+			Port:       cport,
+			HTTPHost:   "127.0.0.1",
+			HTTPPort:   mport,
+			NoLog:      !enableLogging,
+			NoSigs:     true,
+			ConfigFile: confFile,
+		}
 	}
 
 	s := server.New(opts)
@@ -139,7 +149,7 @@ func checkBasicResults(t *testing.T, sr *SummaryRecord, numClients, numPubs, num
 func Test_run_simple(t *testing.T) {
 	s := RunServer()
 	defer s.Shutdown()
-	run("configs/simple.json", false, false, false)
+	Run("configs/simple.json", false, false, false)
 	results := getSummary(t, "./simple_results.json")
 	checkBasicResults(t, results.Summary, 1, 1, 1, 3000, 3000, 0, 1)
 	os.Remove("./simple_results.json")
@@ -148,7 +158,7 @@ func Test_run_simple(t *testing.T) {
 func Test_run_streams(t *testing.T) {
 	s := RunServer()
 	defer s.Shutdown()
-	run("configs/4streams.json", false, false, false)
+	Run("configs/4streams.json", false, false, false)
 	results := getSummary(t, "./4streams_results.json")
 	checkBasicResults(t, results.Summary, 8, 4, 4, 4000, 4000, 0, 1)
 	os.Remove("./4streams_results.json")
@@ -157,15 +167,33 @@ func Test_run_streams(t *testing.T) {
 func Test_run_fanout_1to100(t *testing.T) {
 	s := RunServer()
 	defer s.Shutdown()
-	run("configs/fanout_1to100.json", false, false, false)
+	Run("configs/fanout_1to100.json", false, false, false)
 	results := getSummary(t, "./fanout_1to100_results.json")
 	checkBasicResults(t, results.Summary, 101, 1, 100, 1000, 100000, 0, 1)
 	os.Remove("fanout_1to100_results.json")
 }
 
 func Test_run_NoServer(t *testing.T) {
-	run("configs/simple.json", false, false, false)
+	Run("configs/simple.json", false, false, false)
 	results := getSummary(t, "./simple_results.json")
 	checkBasicResults(t, results.Summary, 1, 1, 1, 0, 0, 1, 2)
 	os.Remove("./simple_results.json")
+}
+
+func Test_run_tls(t *testing.T) {
+	s := RunServerWithPorts(ClientPort, MonitorPort, "./server/gnatsd.conf")
+	defer s.Shutdown()
+	Run("configs/tls.json", false, false, false)
+	results := getSummary(t, "./tls_results.json")
+	checkBasicResults(t, results.Summary, 1, 1, 1, 3000, 3000, 0, 1)
+	os.Remove("./tls_results.json")
+}
+
+func Test_run_tls_full(t *testing.T) {
+	s := RunServerWithPorts(ClientPort, MonitorPort, "./server/gnatsd.conf")
+	defer s.Shutdown()
+	Run("configs/tls_with_cipher.json", false, false, false)
+	results := getSummary(t, "./tls_with_cipher_results.json")
+	checkBasicResults(t, results.Summary, 1, 1, 1, 3000, 3000, 0, 1)
+	os.Remove("./tls_with_cipher_results.json")
 }

@@ -510,7 +510,7 @@ func (c *Client) startDelay() {
 	if smd != "" {
 		delayMax, err := time.ParseDuration(smd)
 		if err != nil {
-			printf("Ignoring start delay: %v", err)
+			log.Fatalf("Invalid start delay: %v", err)
 		}
 		if delayMax > 0 {
 			d := time.Duration(rand.Int63n(delayMax.Nanoseconds()))

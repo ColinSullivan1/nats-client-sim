@@ -865,6 +865,7 @@ func (cm *ClientManager) displayRates() {
 type SummaryRecord struct {
 	Type              string `json:"type"`
 	TestName          string `json:"testname"`
+	TimeStamp         string `json:"timestamp"`
 	Hostname          string `json:"hostname"`
 	CfgDuration       string `json:"duration"`
 	ActDuration       string `json:"active_duration"`
@@ -939,6 +940,7 @@ func (cm *ClientManager) NewSummaryRecord() *SummaryRecord {
 	sr := &SummaryRecord{
 		Type:              "summary",
 		TestName:          cm.config.Name,
+		TimeStamp:         time.Now().String(),
 		Hostname:          hostname,
 		CfgDuration:       cm.config.TestDur,
 		ActDuration:       cm.perfEndTime.Sub(cm.perfStartTime).String(),
@@ -994,7 +996,9 @@ func (cm *ClientManager) NewClientRecord(c *Client) *ClientRecord {
 		Name:            c.config.Name,
 		Instance:        c.instance,
 		ConnectAttempts: int(c.connAttempts),
+		ConnectTime:     c.connCreateDur.String(),
 		Errors:          int(c.errCount),
+		Disconnects:     int(c.dcCount),
 		Reconnects:      int(c.rcCount),
 		AsyncErrors:     int(c.asCount),
 		PublishRate:     c.GetPublishActualMsgsPerSec(),
@@ -1013,6 +1017,7 @@ func (cm *ClientManager) NewClientRecord(c *Client) *ClientRecord {
 			cr.Subscribers[i].Rate = rps(s.received, s.stopTime.Sub(s.startTime))
 			cr.Subscribers[i].RecvCount = int(s.GetReceivedCount())
 		}
+		cr.TotalMessagesRecv = trecv
 	}
 
 	return cr

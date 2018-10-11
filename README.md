@@ -7,12 +7,12 @@ This was designed as a tool to help identify the best machine image / resource c
 ## Installation
 
 ```bash
-> go get https://github.com/src/ColinSullivan1/nats-client-sim
+> go get github.com/ColinSullivan1/nats-client-sim
 ```
 
 ## Usage
 
-The NATS client simulator is configuration file driven; this allows you to save various configurations to test and compare against different images, network settings, cluster sizes, etc.
+The NATS client simulator is configuration file driven allowing you to save various configurations to test and compare against different machine images, network settings, cluster sizes, etc.
 
 ```text
 Usage of ./nats-client-sim:
@@ -21,13 +21,13 @@ Usage of ./nats-client-sim:
   -report         Print a long form of report data.
 ```
 
-If no configuration file is specfied, a local configuration file, `config.json` is used.  If `config.json` is not present, a configuration is generated that simulates a publisher app and a subscriber app producing and consuming on a unique stream.  This is a great way to start a configuration.  After a test has been run, results.json file is generated containing a summary and results of all simulated clients.
+If no configuration file is specfied, a local configuration file, `config.json` is used.  If `config.json` is not present, a configuration is generated that simulates a publisher app and a subscriber app producing and consuming on a unique stream.  This is a convenient way to start your configuration.  After a test has been run, a `results.json` file is generated containing a summary and results of all simulated clients.
 
 ### Configuration Files
 
 Let's dissect the default configuration file:
 
-```json
+```text
 {
   "name": "single_pub_sub",          ## Name of the test, saved in results.json 
   "url": "nats://localhost:4222",    ## The urls the clients will use
@@ -35,7 +35,7 @@ Let's dissect the default configuration file:
   "connect_timeout": "",             ## NATS Timeout - a connect timeout.
   "initial_connect_attempts": 10,    ## Number of connect attepts before giving up.
   "output_file": "results.json",     ## Name of the output file
-  "prettyprint": true,               ## Print in JSON, or "devops" JSON format.
+  "prettyprint": true,               ## Print in JSON (vs a "devops" JSON format).
   "client_start_delay_max": "250ms", ## Random start delay for each client.
   "tlsca": "",                       ## TLS certificate authority
   "tlscert": "",                     ## TLS certificate
@@ -120,7 +120,7 @@ In testing at scale, these configuration parameters are ones you'll want to look
 
 `"connect_attempts` - During the connection phase of the test, clients will keep connecting until successful or until they've exceeding this value.  Note that with a high value here and a high value for connect timeout may mean a test will run much longer than specified by the duration.
 
-`"test_duration`" - Simply how long the test will run.
+`"test_duration`" -  How long the test will run, e.g. `1s`, `5m`, `12h` etc.
 
 ## Output
 
@@ -145,7 +145,7 @@ In testing at scale, these configuration parameters are ones you'll want to look
 
 If specified, a results file is generated.  We'll dissect the output...
 
-```json
+```text
 {
     "summary": {
         "type": "summary",                  ## Type of JSON record
@@ -212,9 +212,9 @@ If specified, a results file is generated.  We'll dissect the output...
     ]
 ```
 
-From here, we can see there were no asychronous errors (usually slow consumers), and the subscriber was keeping up with the publisher, so this is a sustainable system.
+From here, we can see there were no asychronous errors (usually slow consumers), and we see that the subscriber was keeping up with the publisher, so this is a sustainable system.
 
 ## TODO
 
 [ ] Break into muliple source files (client, client manager, main, etc.)
-[ ] Better test timing - create a connect timeout.
+[ ] Better test timing - create a connect timer to give up connecting and continue after a period of time.

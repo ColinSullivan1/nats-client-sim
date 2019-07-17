@@ -16,7 +16,7 @@ import (
 
 	"math/rand"
 
-	"github.com/nats-io/go-nats"
+	"github.com/nats-io/nats.go"
 )
 
 //
@@ -101,6 +101,7 @@ type ClientConfig struct {
 	Instances      int               `json:"instances"`
 	UserName       string            `json:"username"`
 	Password       string            `json:"password"`
+	Token          string            `json:"token"`
 	PubMsgSize     int               `json:"pub_msgsize"`
 	PubRate        int               `json:"pub_msgs_sec"`
 	PubMsgCount    int               `json:"pub_msgcount,omitempty"`
@@ -352,6 +353,7 @@ func (c *Client) generateOptions() (*nats.Options, error) {
 	opts.ClosedCB = c.closedHandler
 	opts.User = c.config.UserName
 	opts.Password = c.config.Password
+	opts.Token = c.config.Token
 	opts.Name = c.clientID
 	opts.SubChanLen = 1024 * 1024
 	opts.Timeout = c.cm.connectTimeout
@@ -1123,7 +1125,7 @@ func (cm *ClientManager) printBanner() {
 	printf("===================================")
 }
 
-// run runs the application
+// Run executes the application
 func Run(configFile string, isVerbose, isTraceVerbose, longReport bool) {
 	var err error
 

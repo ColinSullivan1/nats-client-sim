@@ -2,60 +2,91 @@
 
 
 [[projects]]
+  digest = "1:3cd995ba51100416e90d974f4a8ae6002796f4dd7ca7bfaec2983d77404192c5"
   name = "github.com/nats-io/gnatsd"
   packages = [
     "conf",
     "logger",
-    "server",
     "server/pse",
-    "util"
   ]
-  revision = "eed4fbc1458ce110ad1aa1adf904229bc8fda2a7"
-  version = "v1.3.0"
+  pruneopts = "UT"
+  revision = "6a40503f972e032881e43e1a1bcf30f2efe0e2e4"
+  version = "v2.0.2"
 
 [[projects]]
-  name = "github.com/nats-io/go-nats"
+  digest = "1:f842b8fba39ecb0709d40b8069d71d08787cc04100387a289879667218ffae84"
+  name = "github.com/nats-io/nats-server"
+  packages = [
+    "logger",
+    "server",
+  ]
+  pruneopts = "UT"
+  revision = "3e64f0bfd1fe4c2cf6599f064ff72fa7af439663"
+  version = "v1.4.1"
+
+[[projects]]
+  digest = "1:8de5a74ac9ff41ba07e18c5053ab631549b46bb3064ddba30027e774af1ff31f"
+  name = "github.com/nats-io/nats.go"
   packages = [
     ".",
     "encoders/builtin",
-    "util"
+    "util",
   ]
-  revision = "fb0396ee0bdb8018b0fef30d6d1de798ce99cd05"
-  version = "v1.6.0"
+  pruneopts = "UT"
+  revision = "e2837a2879e82886f6e21715e3a0217fdc46d370"
+  version = "v1.8.1"
 
 [[projects]]
+  digest = "1:237d85e4f5e91ac6cfc13bad508627570ff29efa28f523d41aac2d39ca15950f"
+  name = "github.com/nats-io/nkeys"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "0073b400419be3ffb022ef46b675805e92534a34"
+  version = "v0.1.0"
+
+[[projects]]
+  digest = "1:599f3202ce0a754144ddc4be4c6df9c6ab27b1d722a63ede6b2e0c3a2cc338a8"
   name = "github.com/nats-io/nuid"
   packages = ["."]
-  revision = "289cccf02c178dc782430d534e3c1f5b72af807f"
-  version = "v1.0.0"
+  pruneopts = "UT"
+  revision = "4b96681fa6d28dd0ab5fe79bac63b3a493d9ee94"
+  version = "v1.0.1"
 
 [[projects]]
   branch = "master"
+  digest = "1:3c51ccce1bee3a6f06db4658e02dfa62030b1f4250b8b2bee1b3ee4a829a4c30"
   name = "golang.org/x/crypto"
   packages = [
     "bcrypt",
     "blowfish",
-    "ssh/terminal"
+    "ed25519",
+    "ed25519/internal/edwards25519",
   ]
-  revision = "e3636079e1a4c1f337f212cc5cd2aca108f6c900"
+  pruneopts = "UT"
+  revision = "4def268fd1a49955bfb3dda92fe3db4f924f2285"
 
 [[projects]]
   branch = "master"
+  digest = "1:ba8afd45d6a3894862e9550552df374bbfc69b8777fc5b6991e3278a1e9e421d"
   name = "golang.org/x/sys"
   packages = [
-    "unix",
     "windows",
     "windows/registry",
     "windows/svc",
     "windows/svc/debug",
     "windows/svc/eventlog",
-    "windows/svc/mgr"
+    "windows/svc/mgr",
   ]
-  revision = "4497e2df6f9e69048a54498c7affbbec3294ad47"
+  pruneopts = "UT"
+  revision = "fae7ac547cb717d141c433a2a173315e216b64c4"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "c075f6b44caec1f411258c99c10a9d689734b7c32c9812384a1a8bcca718ee1f"
+  input-imports = [
+    "github.com/nats-io/nats-server/logger",
+    "github.com/nats-io/nats-server/server",
+    "github.com/nats-io/nats.go",
+  ]
   solver-name = "gps-cdcl"
   solver-version = 1

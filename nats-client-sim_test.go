@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/gnatsd/logger"
-	"github.com/nats-io/gnatsd/server"
+	"github.com/nats-io/nats-server/logger"
+	"github.com/nats-io/nats-server/server"
 )
 
 const (
@@ -196,4 +196,13 @@ func Test_run_tls_full(t *testing.T) {
 	results := getSummary(t, "./tls_with_cipher_results.json")
 	checkBasicResults(t, results.Summary, 1, 1, 1, 3000, 3000, 0, 1)
 	os.Remove("./tls_with_cipher_results.json")
+}
+
+func Test_run_Tokens(t *testing.T) {
+	s := RunServerWithPorts(ClientPort, MonitorPort, "./server/token.conf")
+	defer s.Shutdown()
+	Run("configs/token.json", false, false, false)
+	results := getSummary(t, "./token_results.json")
+	checkBasicResults(t, results.Summary, 1, 1, 1, 1, 0, 0, 1)
+	os.Remove("./token_results.json")
 }

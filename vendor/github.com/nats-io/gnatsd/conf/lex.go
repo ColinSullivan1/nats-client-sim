@@ -101,12 +101,19 @@ type lexer struct {
 	// Used for processing escapable substrings in double-quoted and raw strings
 	stringParts   []string
 	stringStateFn stateFn
+
+	// lstart is the start position of the current line.
+	lstart int
+
+	// ilstart is the start position of the line from the current item.
+	ilstart int
 }
 
 type item struct {
 	typ  itemType
 	val  string
 	line int
+	pos  int
 }
 
 func (lx *lexer) nextItem() item {
@@ -147,8 +154,13 @@ func (lx *lexer) pop() stateFn {
 }
 
 func (lx *lexer) emit(typ itemType) {
-	lx.items <- item{typ, strings.Join(lx.stringParts, "") + lx.input[lx.start:lx.pos], lx.line}
+	val := strings.Join(lx.stringParts, "") + lx.input[lx.start:lx.pos]
+
+	// Position of item in line where it started.
+	pos := lx.pos - lx.ilstart - len(val)
+	lx.items <- item{typ, val, lx.line, pos}
 	lx.start = lx.pos
+	lx.ilstart = lx.lstart
 }
 
 func (lx *lexer) emitString() {
@@ -159,8 +171,11 @@ func (lx *lexer) emitString() {
 	} else {
 		finalString = lx.input[lx.start:lx.pos]
 	}
-	lx.items <- item{itemString, finalString, lx.line}
+	// Position of string in line where it started.
+	pos := lx.pos - lx.ilstart - len(finalString)
+	lx.items <- item{itemString, finalString, lx.line, pos}
 	lx.start = lx.pos
+	lx.ilstart = lx.lstart
 }
 
 func (lx *lexer) addCurrentStringPart(offset int) {
@@ -186,15 +201,20 @@ func (lx *lexer) next() (r rune) {
 
 	if lx.input[lx.pos] == '\n' {
 		lx.line++
+
+		// Mark start position of current line.
+		lx.lstart = lx.pos
 	}
 	r, lx.width = utf8.DecodeRuneInString(lx.input[lx.pos:])
 	lx.pos += lx.width
+
 	return r
 }
 
 // ignore skips over the pending input before this point.
 func (lx *lexer) ignore() {
 	lx.start = lx.pos
+	lx.ilstart = lx.lstart
 }
 
 // backup steps back one rune. Can be called only once per call of next.
@@ -221,10 +241,14 @@ func (lx *lexer) errorf(format string, values ...interface{}) stateFn {
 			values[i] = escapeSpecial(v)
 		}
 	}
+
+	// Position of error in current line.
+	pos := lx.pos - lx.lstart
 	lx.items <- item{
 		itemError,
 		fmt.Sprintf(format, values...),
 		lx.line,
+		pos,
 	}
 	return nil
 }
@@ -322,6 +346,12 @@ func lexDubQuotedKey(lx *lexer) stateFn {
 		lx.emit(itemKey)
 		lx.next()
 		return lexSkip(lx, lexKeyEnd)
+	} else if r == eof {
+		if lx.pos > lx.start {
+			return lx.errorf("Unexpected EOF.")
+		}
+		lx.emit(itemEOF)
+		return nil
 	}
 	lx.next()
 	return lexDubQuotedKey
@@ -334,6 +364,12 @@ func lexQuotedKey(lx *lexer) stateFn {
 		lx.emit(itemKey)
 		lx.next()
 		return lexSkip(lx, lexKeyEnd)
+	} else if r == eof {
+		if lx.pos > lx.start {
+			return lx.errorf("Unexpected EOF.")
+		}
+		lx.emit(itemEOF)
+		return nil
 	}
 	lx.next()
 	return lexQuotedKey
@@ -511,7 +547,7 @@ func lexValue(lx *lexer) stateFn {
 		return lexBlock
 	case unicode.IsDigit(r):
 		lx.backup() // avoid an extra state and use the same as above
-		return lexNumberOrDateOrIPStart
+		return lexNumberOrDateOrStringOrIPStart
 	case r == '.': // special error case, be kind to users
 		return lx.errorf("Floats must start with a digit")
 	case isNL(r):
@@ -594,6 +630,8 @@ func lexMapKeyStart(lx *lexer) stateFn {
 	switch {
 	case isKeySeparator(r):
 		return lx.errorf("Unexpected key separator '%v'.", r)
+	case r == arrayEnd:
+		return lx.errorf("Unexpected array end '%v' processing map.", r)
 	case unicode.IsSpace(r):
 		lx.next()
 		return lexSkip(lx, lexMapKeyStart)
@@ -618,6 +656,8 @@ func lexMapKeyStart(lx *lexer) stateFn {
 	case r == dqStringStart:
 		lx.next()
 		return lexSkip(lx, lexMapDubQuotedKey)
+	case r == eof:
+		return lx.errorf("Unexpected EOF processing map.")
 	}
 	lx.ignore()
 	lx.next()
@@ -762,6 +802,12 @@ func lexQuotedString(lx *lexer) stateFn {
 		lx.next()
 		lx.ignore()
 		return lx.pop()
+	case r == eof:
+		if lx.pos > lx.start {
+			return lx.errorf("Unexpected EOF.")
+		}
+		lx.emit(itemEOF)
+		return nil
 	}
 	return lexQuotedString
 }
@@ -781,6 +827,12 @@ func lexDubQuotedString(lx *lexer) stateFn {
 		lx.next()
 		lx.ignore()
 		return lx.pop()
+	case r == eof:
+		if lx.pos > lx.start {
+			return lx.errorf("Unexpected EOF.")
+		}
+		lx.emit(itemEOF)
+		return nil
 	}
 	return lexDubQuotedString
 }
@@ -848,6 +900,8 @@ func lexBlock(lx *lexer) stateFn {
 			return lx.pop()
 		}
 		lx.backup()
+	case r == eof:
+		return lx.errorf("Unexpected EOF processing block.")
 	}
 	return lexBlock
 }
@@ -894,9 +948,11 @@ func lexStringBinary(lx *lexer) stateFn {
 	return lx.stringStateFn
 }
 
-// lexNumberOrDateStart consumes either a (positive) integer, a float, a datetime, or IP.
-// It assumes that NO negative sign has been consumed, that is triggered above.
-func lexNumberOrDateOrIPStart(lx *lexer) stateFn {
+// lexNumberOrDateOrStringOrIPStart consumes either a (positive)
+// integer, a float, a datetime, or IP, or String that started with a
+// number.  It assumes that NO negative sign has been consumed, that
+// is triggered above.
+func lexNumberOrDateOrStringOrIPStart(lx *lexer) stateFn {
 	r := lx.next()
 	if !unicode.IsDigit(r) {
 		if r == '.' {
@@ -904,11 +960,13 @@ func lexNumberOrDateOrIPStart(lx *lexer) stateFn {
 		}
 		return lx.errorf("Expected a digit but got '%v'.", r)
 	}
-	return lexNumberOrDateOrIP
+	return lexNumberOrDateOrStringOrIP
 }
 
-// lexNumberOrDateOrIP consumes either a (positive) integer, float, datetime or IP.
-func lexNumberOrDateOrIP(lx *lexer) stateFn {
+// lexNumberOrDateOrStringOrIP consumes either a (positive) integer,
+// float, datetime, IP or string without quotes that starts with a
+// number.
+func lexNumberOrDateOrStringOrIP(lx *lexer) stateFn {
 	r := lx.next()
 	switch {
 	case r == '-':
@@ -917,13 +975,17 @@ func lexNumberOrDateOrIP(lx *lexer) stateFn {
 		}
 		return lexDateAfterYear
 	case unicode.IsDigit(r):
-		return lexNumberOrDateOrIP
+		return lexNumberOrDateOrStringOrIP
 	case r == '.':
-		return lexFloatStart // Assume float at first, but could be IP
+		// Assume float at first, but could be IP
+		return lexFloatStart
 	case isNumberSuffix(r):
 		return lexConvenientNumber
+	case !(isNL(r) || r == eof || r == mapEnd || r == optValTerm || r == mapValTerm || isWhitespace(r) || unicode.IsDigit(r)):
+		// Treat it as a string value once we get a rune that
+		// is not a number.
+		return lexString
 	}
-
 	lx.backup()
 	lx.emit(itemInteger)
 	return lx.pop()
@@ -1129,7 +1191,7 @@ func (itype itemType) String() string {
 }
 
 func (item item) String() string {
-	return fmt.Sprintf("(%s, '%s', %d)", item.typ.String(), item.val, item.line)
+	return fmt.Sprintf("(%s, '%s', %d, %d)", item.typ.String(), item.val, item.line, item.pos)
 }
 
 func escapeSpecial(c rune) string {

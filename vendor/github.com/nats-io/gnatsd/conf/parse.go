@@ -49,15 +49,21 @@ type parser struct {
 	// Keys stack
 	keys []string
 
+	// Keys stack as items
+	ikeys []item
+
 	// The config file path, empty by default.
 	fp string
+
+	// pedantic reports error when configuration is not correct.
+	pedantic bool
 }
 
 // Parse will return a map of keys to interface{}, although concrete types
 // underly them. The values supported are string, bool, int64, float64, DateTime.
 // Arrays and nested Maps are also supported.
 func Parse(data string) (map[string]interface{}, error) {
-	p, err := parse(data, "")
+	p, err := parse(data, "", false)
 	if err != nil {
 		return nil, err
 	}
@@ -71,20 +77,64 @@ func ParseFile(fp string) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("error opening config file: %v", err)
 	}
 
-	p, err := parse(string(data), filepath.Dir(fp))
+	p, err := parse(string(data), fp, false)
 	if err != nil {
 		return nil, err
 	}
 	return p.mapping, nil
 }
 
-func parse(data, fp string) (p *parser, err error) {
+// ParseFileWithChecks is equivalent to ParseFile but runs in pedantic mode.
+func ParseFileWithChecks(fp string) (map[string]interface{}, error) {
+	data, err := ioutil.ReadFile(fp)
+	if err != nil {
+		return nil, err
+	}
+
+	p, err := parse(string(data), fp, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return p.mapping, nil
+}
+
+type token struct {
+	item         item
+	value        interface{}
+	usedVariable bool
+	sourceFile   string
+}
+
+func (t *token) Value() interface{} {
+	return t.value
+}
+
+func (t *token) Line() int {
+	return t.item.line
+}
+
+func (t *token) IsUsedVariable() bool {
+	return t.usedVariable
+}
+
+func (t *token) SourceFile() string {
+	return t.sourceFile
+}
+
+func (t *token) Position() int {
+	return t.item.pos
+}
+
+func parse(data, fp string, pedantic bool) (p *parser, err error) {
 	p = &parser{
-		mapping: make(map[string]interface{}),
-		lx:      lex(data),
-		ctxs:    make([]interface{}, 0, 4),
-		keys:    make([]string, 0, 4),
-		fp:      fp,
+		mapping:  make(map[string]interface{}),
+		lx:       lex(data),
+		ctxs:     make([]interface{}, 0, 4),
+		keys:     make([]string, 0, 4),
+		ikeys:    make([]item, 0, 4),
+		fp:       filepath.Dir(fp),
+		pedantic: pedantic,
 	}
 	p.pushContext(p.mapping)
 
@@ -93,7 +143,7 @@ func parse(data, fp string) (p *parser, err error) {
 		if it.typ == itemEOF {
 			break
 		}
-		if err := p.processItem(it); err != nil {
+		if err := p.processItem(it, fp); err != nil {
 			return nil, err
 		}
 	}
@@ -135,19 +185,49 @@ func (p *parser) popKey() string {
 	return last
 }
 
-func (p *parser) processItem(it item) error {
+func (p *parser) pushItemKey(key item) {
+	p.ikeys = append(p.ikeys, key)
+}
+
+func (p *parser) popItemKey() item {
+	if len(p.ikeys) == 0 {
+		panic("BUG in parser, item keys stack empty")
+	}
+	li := len(p.ikeys) - 1
+	last := p.ikeys[li]
+	p.ikeys = p.ikeys[0:li]
+	return last
+}
+
+func (p *parser) processItem(it item, fp string) error {
+	setValue := func(it item, v interface{}) {
+		if p.pedantic {
+			p.setValue(&token{it, v, false, fp})
+		} else {
+			p.setValue(v)
+		}
+	}
+
 	switch it.typ {
 	case itemError:
 		return fmt.Errorf("Parse error on line %d: '%s'", it.line, it.val)
 	case itemKey:
+		// Keep track of the keys as items and strings,
+		// we do this in order to be able to still support
+		// includes without many breaking changes.
 		p.pushKey(it.val)
+
+		if p.pedantic {
+			p.pushItemKey(it)
+		}
 	case itemMapStart:
 		newCtx := make(map[string]interface{})
 		p.pushContext(newCtx)
 	case itemMapEnd:
-		p.setValue(p.popContext())
+		setValue(it, p.popContext())
 	case itemString:
-		p.setValue(it.val) // FIXME(dlc) sanitize string?
+		// FIXME(dlc) sanitize string?
+		setValue(it, it.val)
 	case itemInteger:
 		lastDigit := 0
 		for _, r := range it.val {
@@ -161,75 +241,110 @@ func (p *parser) processItem(it item) error {
 		if err != nil {
 			if e, ok := err.(*strconv.NumError); ok &&
 				e.Err == strconv.ErrRange {
-				return fmt.Errorf("Integer '%s' is out of the range.", it.val)
+				return fmt.Errorf("integer '%s' is out of the range", it.val)
 			}
-			return fmt.Errorf("Expected integer, but got '%s'.", it.val)
+			return fmt.Errorf("expected integer, but got '%s'", it.val)
 		}
 		// Process a suffix
 		suffix := strings.ToLower(strings.TrimSpace(it.val[lastDigit:]))
+
 		switch suffix {
 		case "":
-			p.setValue(num)
+			setValue(it, num)
 		case "k":
-			p.setValue(num * 1000)
+			setValue(it, num*1000)
 		case "kb":
-			p.setValue(num * 1024)
+			setValue(it, num*1024)
 		case "m":
-			p.setValue(num * 1000 * 1000)
+			setValue(it, num*1000*1000)
 		case "mb":
-			p.setValue(num * 1024 * 1024)
+			setValue(it, num*1024*1024)
 		case "g":
-			p.setValue(num * 1000 * 1000 * 1000)
+			setValue(it, num*1000*1000*1000)
 		case "gb":
-			p.setValue(num * 1024 * 1024 * 1024)
+			setValue(it, num*1024*1024*1024)
 		}
 	case itemFloat:
 		num, err := strconv.ParseFloat(it.val, 64)
 		if err != nil {
 			if e, ok := err.(*strconv.NumError); ok &&
 				e.Err == strconv.ErrRange {
-				return fmt.Errorf("Float '%s' is out of the range.", it.val)
+				return fmt.Errorf("float '%s' is out of the range", it.val)
 			}
-			return fmt.Errorf("Expected float, but got '%s'.", it.val)
+			return fmt.Errorf("expected float, but got '%s'", it.val)
 		}
-		p.setValue(num)
+		setValue(it, num)
 	case itemBool:
 		switch strings.ToLower(it.val) {
 		case "true", "yes", "on":
-			p.setValue(true)
+			setValue(it, true)
 		case "false", "no", "off":
-			p.setValue(false)
+			setValue(it, false)
 		default:
-			return fmt.Errorf("Expected boolean value, but got '%s'.", it.val)
+			return fmt.Errorf("expected boolean value, but got '%s'", it.val)
 		}
+
 	case itemDatetime:
 		dt, err := time.Parse("2006-01-02T15:04:05Z", it.val)
 		if err != nil {
 			return fmt.Errorf(
-				"Expected Zulu formatted DateTime, but got '%s'.", it.val)
+				"expected Zulu formatted DateTime, but got '%s'", it.val)
 		}
-		p.setValue(dt)
+		setValue(it, dt)
 	case itemArrayStart:
 		var array = make([]interface{}, 0)
 		p.pushContext(array)
 	case itemArrayEnd:
 		array := p.ctx
 		p.popContext()
-		p.setValue(array)
+		setValue(it, array)
 	case itemVariable:
-		if value, ok := p.lookupVariable(it.val); ok {
-			p.setValue(value)
-		} else {
-			return fmt.Errorf("Variable reference for '%s' on line %d can not be found.",
+		value, found, err := p.lookupVariable(it.val)
+		if err != nil {
+			return fmt.Errorf("variable reference for '%s' on line %d could not be parsed: %s",
+				it.val, it.line, err)
+		}
+		if !found {
+			return fmt.Errorf("variable reference for '%s' on line %d can not be found",
 				it.val, it.line)
 		}
+
+		if p.pedantic {
+			switch tk := value.(type) {
+			case *token:
+				// Mark the looked up variable as used, and make
+				// the variable reference become handled as a token.
+				tk.usedVariable = true
+				p.setValue(&token{it, tk.Value(), false, fp})
+			default:
+				// Special case to add position context to bcrypt references.
+				p.setValue(&token{it, value, false, fp})
+			}
+		} else {
+			p.setValue(value)
+		}
 	case itemInclude:
-		m, err := ParseFile(filepath.Join(p.fp, it.val))
+		var (
+			m   map[string]interface{}
+			err error
+		)
+		if p.pedantic {
+			m, err = ParseFileWithChecks(filepath.Join(p.fp, it.val))
+		} else {
+			m, err = ParseFile(filepath.Join(p.fp, it.val))
+		}
 		if err != nil {
-			return fmt.Errorf("Error parsing include file '%s', %v.", it.val, err)
+			return fmt.Errorf("error parsing include file '%s', %v", it.val, err)
 		}
 		for k, v := range m {
 			p.pushKey(k)
+
+			if p.pedantic {
+				switch tk := v.(type) {
+				case *token:
+					p.pushItemKey(tk.item)
+				}
+			}
 			p.setValue(v)
 		}
 	}
@@ -248,19 +363,19 @@ const bcryptPrefix = "2a$"
 // ignore array contexts and only process the map contexts..
 //
 // Returns true for ok if it finds something, similar to map.
-func (p *parser) lookupVariable(varReference string) (interface{}, bool) {
+func (p *parser) lookupVariable(varReference string) (interface{}, bool, error) {
 	// Do special check to see if it is a raw bcrypt string.
 	if strings.HasPrefix(varReference, bcryptPrefix) {
-		return "$" + varReference, true
+		return "$" + varReference, true, nil
 	}
 
 	// Loop through contexts currently on the stack.
-	for i := len(p.ctxs) - 1; i >= 0; i -= 1 {
+	for i := len(p.ctxs) - 1; i >= 0; i-- {
 		ctx := p.ctxs[i]
 		// Process if it is a map context
 		if m, ok := ctx.(map[string]interface{}); ok {
 			if v, ok := m[varReference]; ok {
-				return v, ok
+				return v, ok, nil
 			}
 		}
 	}
@@ -271,10 +386,12 @@ func (p *parser) lookupVariable(varReference string) (interface{}, bool) {
 		// Everything we get here will be a string value, so we need to process as a parser would.
 		if vmap, err := Parse(fmt.Sprintf("%s=%s", pkey, vStr)); err == nil {
 			v, ok := vmap[pkey]
-			return v, ok
+			return v, ok, nil
+		} else {
+			return nil, false, err
 		}
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 func (p *parser) setValue(val interface{}) {
@@ -289,7 +406,20 @@ func (p *parser) setValue(val interface{}) {
 	// Map processing
 	if ctx, ok := p.ctx.(map[string]interface{}); ok {
 		key := p.popKey()
-		// FIXME(dlc), make sure to error if redefining same key?
-		ctx[key] = val
+
+		if p.pedantic {
+			// Change the position to the beginning of the key
+			// since more useful when reporting errors.
+			switch v := val.(type) {
+			case *token:
+				it := p.popItemKey()
+				v.item.pos = it.pos
+				v.item.line = it.line
+				ctx[key] = v
+			}
+		} else {
+			// FIXME(dlc), make sure to error if redefining same key?
+			ctx[key] = val
+		}
 	}
 }

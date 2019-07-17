@@ -216,5 +216,5 @@ From here, we can see there were no asychronous errors (usually slow consumers),
 
 ## TODO
 
-[ ] Break into muliple source files (client, client manager, main, etc.)
-[ ] Better test timing - create a connect timer to give up connecting and continue after a period of time.
+- [ ] Break into muliple source files (client, client manager, main, etc.)
+- [ ] Better test timing - create a connect timer to give up connecting and continue after a period of time.
